@@ -1,0 +1,53 @@
+---
+title: 使用 Docker 將 React 靜態檔案放上 Nginx
+date: '2022-08-16'
+description: 示範如何撰寫一份 Dockerfile 將本地 React 應用程式 build 好的靜態檔放入 Nginx 執行 Docker。
+thumbnailUrl: '/javascript-functions-thumbnail.jpeg'
+tags: ['docker']
+---
+
+示範如何撰寫一份 Dockerfile 將本地 React 應用程式 build 好的靜態檔放入 Nginx 執行 Docker。
+
+首先先準備好 React 應用程式，在根目錄新增 `.dockerignore` 檔案，然後寫入 `node_modules`，這樣使用 `ADD` 或 `COPY` 指令時，會自動忽略 `.dockerignore` 內符合名稱的檔案或路徑，讓一些沒必要或敏感的檔案不被打包進去。
+
+```docker
+FROM node:alpine AS stage-1
+```
+
+- 首先告訴 Docker 要使用從 Node.js 官方提供的 Image 開始安裝，tag 是輕量版的 alpine，讓 Docker 幫我們搞定 React 所需的安裝環境，然後透過 `AS stage-1` 將這個階段命名為 `stage-1`。
+
+```docker
+WORKDIR /app
+```
+
+- 讓 Docker 創建一個名為 app 的資料夾，指定工作目錄為 /app ，接下來所有的步驟都將在該目錄中執行。
+
+```docker
+COPY package*.json ./
+RUN npm install
+```
+
+- 將本地目錄的 package 開頭 .json 結尾的檔案複製到 Container 內，這邊的目的是要複製 package.json 及 package-lock.json 兩個檔案。
+- 執行 `npm install` 安裝 package 文件內的依賴項目，只有在第一次 build 的時候會花比較長的時間安裝，之後再次進行 build 時會啟用 Docker 的 cache 機制，利用已經存在的緩存減少安裝時間，除非 package 文件內有異動。
+
+<aside>
+💡 在 `docker build` 指令的最後加上 `--no-cache` 代表這次的 build 不會產生緩存，那在每次的 build 都會重新安裝所需的依賴項。
+
+</aside>
+
+```docker
+COPY ./ ./
+RUN npm run build
+```
+
+- 將本地工作目錄的原始碼全部複製進去，接著執行 `npm run build` 生成靜態檔案，如同在本地執行 build 指令一樣，生成後的檔案會在 /build 資料夾內。
+
+執行到這名為 `stage-1` 的工作階段就結束了，我們最後生成了一包 React 靜態檔案，然後要將它放到 Nginx 內運行，所以要再生成一個 Nginx 的 Image 將靜態檔案放進對應的目錄位置。這邊我們要再起一個工作階段，就像串連兩個 Dockerfile 一樣繼續寫下去：
+
+```docker
+FROM nginx
+COPY --from=stage-1 /app/build/ /usr/share/nginx/html
+```
+
+- 從 Nginx 官方的 Image 開始安裝。
+- 接著 `COPY` 是複製資料，透過 `--from=stage-1` ，這裡雖然在 Nginx 的 Image 內，卻可以從 Dockerfile 內找到用 `as` 指定的 `stage-1` 中取得資料，是 Docker 多階段執行的重要技巧。

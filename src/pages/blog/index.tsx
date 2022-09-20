@@ -3,6 +3,7 @@ import type { GetStaticProps } from 'next';
 
 import { PageSEO } from '@components/SEO';
 import ArticleItem from '@components/blog/ArticleItem';
+import SectionContainer from '@components/layout/SectionContainer';
 
 import { getAllArticles } from '@api/posts.api';
 
@@ -22,7 +23,7 @@ const PageBlogHome = ({ articles }: PageBlogHomeProps) => {
   return (
     <>
       <PageSEO title="Blog" />
-      <div>
+      <SectionContainer>
         <div className="space-y-2 pt-6 pb-8 md:space-y-5">
           <h1 className="text-3xl font-extrabold leading-9 tracking-tight text-gray-900 dark:text-gray-100 sm:text-4xl sm:leading-10 md:text-6xl md:leading-14">
             Blog
@@ -59,7 +60,7 @@ const PageBlogHome = ({ articles }: PageBlogHomeProps) => {
             </li>
           ))}
         </ul>
-      </div>
+      </SectionContainer>
     </>
   );
 };

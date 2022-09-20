@@ -1,16 +1,20 @@
 ---
-title: Docker
+title: 前端工程師從 1 開始學習 Docker
 date: '2022-08-14'
-description: 前端工程師開始學 Docker
+description: 前端工程師學習 Docker 的隨手筆記內容，感受虛擬化容器技術的好處。
 thumbnailUrl: '/javascript-functions-thumbnail.jpeg'
 tags: ['docker']
 ---
 
-# Docker version 20.10.17
+## 前言
 
-## 從 1 開始學 Docker
+>Docker 版本為 20.10.17
 
-這篇文章不會有太多 Docker 的基礎使用方式，因為官方網站的 [Getting started](https://docs.docker.com/get-started/) 已經提供非常詳盡的基本操作說明，只要照著文件一步一步往下走，是不會遇到太大的問題，也可以先熟悉如何下 Docker 指令。
+這篇文章沒有太多 Docker 的基礎使用方式，主要是官方網站的 [Getting started](https://docs.docker.com/get-started/) 已經提供非常詳盡的基本操作說明，只要照著文件一步一步往下走，是不會遇到太大的問題，也可以先熟悉如何下 Docker 指令。
+
+內容偏向讀書紀錄，也許會看起來文謅謅的，但這是個人習慣透過反覆咀嚼文字吸收知識，只有這樣才能更了解這個技術的基礎是什麼。
+
+## Docker 簡介
 
 Docker 的核心稱為 Docker Engine，具有管理 Container 的重要功能，主要由以下三個關鍵要素組成：
 
@@ -51,6 +55,13 @@ FROM --platform=windows/amd64 busybox:latest AS second-stage
     - `tag`：指定 Image 的版本，預設就是 latest。
     - `AS <name>` ：將替當前工作階段命名，當我們有多個工作階段要依序執行時很有用。
     - `--platform=<platform>` ：如果 Image 要用於其他架構平台可填，例如 `linux/amd64`, `linux/arm/v7`,  `windows/amd64`，預設是來自 Image 使用的平台。
+
+### WORKDIR
+```docker
+WORKDIR /app
+```
+
+使用 Dockerfile 時預設的工作路徑是根目錄 `/`，但打包的檔案建議換到一個自建的全新空目錄，例如 `/app`。而 `WORKDIR` 是設定執行 `docker build` 與 `docker run` 預設工作目錄的指令。
 
 ### ARG
 
@@ -126,10 +137,6 @@ RUN ["executable", "param"]
 
 - 如果要看在 build 的過程查看 `RUN` 執行的結果，在 `docker build` 指令後面加上 `—progress=plain` 。
 - 最好是指定 `WORKDIR` 使用。
-
-arg用在build
-
-env用在run
 
 ### CMD
 

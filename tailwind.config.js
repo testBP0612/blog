@@ -19,6 +19,7 @@ module.exports = {
         DEFAULT: {
           css: {
             color: theme('colors.gray.700'),
+            p: { textAlign: 'justify' },
             a: {
               color: theme('colors.primary.500'),
               '&:hover': {
@@ -45,6 +46,18 @@ module.exports = {
             },
             pre: {
               backgroundColor: theme('colors.gray.800'),
+            },
+            aside: {
+              paddingLeft: '10px',
+              paddingRight: '10px',
+              borderLeftColor: theme('colors.pink.500'),
+              borderRightColor: theme('colors.pink.500'),
+              borderLeftWidth: '6px',
+              borderRightWidth: '6px',
+
+              'p::first-letter': {
+                fontSize: '1.5rem !important',
+              },
             },
             code: {
               color: theme('colors.pink.500'),

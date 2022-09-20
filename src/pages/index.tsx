@@ -3,12 +3,17 @@ import Head from 'next/head';
 import Image from 'next/image';
 
 import { PageSEO } from '@components/SEO';
+import SectionContainer from '@components/layout/SectionContainer';
+import { Start } from '@components/icon';
 
 const Home: NextPage = () => {
   return (
     <>
       <PageSEO />
-      <h1 className="text-3xl font-bold underline">Hello world!</h1>
+      <SectionContainer>
+        <h1 className="text-3xl font-bold underline">Hello world!</h1>
+        <Start fill='' stroke='' />
+      </SectionContainer>
     </>
   );
 };

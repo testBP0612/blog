@@ -1,0 +1,281 @@
+---
+title: 使用 Docker 將 Next.js 應用程式放上 Nginx
+date: '2022-09-13'
+description: 示範如何撰寫一份 Dockerfile 將本地 React 應用程式 build 好的靜態檔放入 Nginx 執行 Docker。
+thumbnailUrl: '/javascript-functions-thumbnail.jpeg'
+tags: ['docker']
+---
+
+## 前言
+
+一般如果要將開發好的網站放上網路供人閱覽，一般會使用 Nginx 或 Apache 作為 web server。本文章將紀錄學習撰寫 `Dockerfile` 將本地 Next.js 應用程式 build 好的放入 Nginx 的過程。
+
+## 使用 Dockerfile 將 Next.js 靜態資源放上 Nginx
+
+主要流程是使用 Next.js 提供的 `next export` 將應用程式輸出為靜態 HTML， 然後放入 Nginx 指定的路徑就搞定了。
+
+<aside>
+💡 `next export` 輸出的 HTML 是根據 `getStaticProps` 和 `getStaticPaths` 將 `/page` 路徑下的每個頁面生成一個 HTML 文件（包含 dynamic routes）。如果應用程式中有使用到 `fallback: true` 或是 `getServerSideProps` 的 SSR 頁面將無法使用這個方法打包。更多資訊請查閱[官方文件](https://nextjs.org/docs/advanced-features/static-html-export)。如果想知道如何打包 SSR 頁面可以往下繼續閱讀。
+
+</aside>
+
+首先先準備好 Next.js 應用程式，在根目錄新增 `.dockerignore` 檔案，這樣使用 `ADD` 或 `COPY` 指令時，會自動排除 `.dockerignore` 內符合名稱的檔案或路徑，讓一些沒必要或敏感的檔案不會在部署階段被打包進去。寫入以下內容：
+
+```docker
+.dockerignore
+.next/
+.git
+Dockerfile
+node_modules/
+README.md
+```
+
+### 撰寫 Dockerfile
+
+一樣在根目錄新增名為 `Dockerfile` 檔案，第一個階段創造一個名為 `deps` 的工作階段，透過 Node.js 安裝應用程式所需要的依賴項。寫入以下內容：
+
+```docker
+FROM node:alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+```
+
+- `FROM node:alpine AS deps` 告訴 Docker 使用從 Node.js 官方提供的 Image 開始安裝，tag 是輕量版的 alpine，讓 Docker 幫我們搞定所需的安裝環境，然後透過 `AS deps` 將這個階段命名為 `desp`。
+- `RUN apk add --no-cache libc6-compat` 因為使用的是最輕量的 alpine 版本，這在安裝某些套件的時候會遇到問題（取決於套件的依賴深度），因此[官方建議](https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine)安裝 libc6-compat 將可能缺少的依賴項目補上。
+- `WORKDIR /app` 讓 Docker 創建一個名為 app 的資料夾，指定工作目錄為 /app ，接下來所有的步驟都將在該目錄中執行。
+- `COPY package*.json ./` 將本地目錄的 package 開頭 .json 結尾的檔案複製到 Container 內，這邊的目的是要複製 package.json 及 package-lock.json 兩個檔案。
+`RUN npm CI`  安裝 package 文件內的依賴項目。只有在第一次 build 的時候會花比較長的時間安裝，之後再次進行 build 時會啟用 Docker 的 cache 機制，利用已經存在的緩存減少安裝時間，除非 package 文件內有異動。
+
+<aside>
+💡 在 `docker build` 指令的最後加上 `--no-cache` 代表這次的 build 不會產生緩存，那在每次的 build 都會重新安裝所需的依賴項。
+
+</aside>
+
+現在我們有了所需的依賴項目，再來將應用程式的原始碼放進 Image 以便接下來進行建構所需的靜態檔案。繼續寫入以下內容：
+
+```docker
+FROM node:alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build && npm run export
+```
+
+- `FROM node:alpine AS builder` 一樣從 Node.js 官方提供的 Image 啟動一個名為 `builder` 的工作階段。
+- `COPY --from=deps /app/node_modules ./node_modules` 從 `deps` 階段將依賴項目複製到本階段的 `./node_modules` 資料夾內。這裡雖然在不同的工作階段，卻可以從 Dockerfile 內找到用 `as` 指定的 `deps` 取得資料，是 Docker 多階段執行的重要技巧。
+`COPY . .` 將本地工作目錄的原始碼全部複製進去。
+- `RUN npm run build && npm run export` 生成靜態檔案。先執行 build 指令是因為 export 需要 build 產生出來的檔案，最後我們需要的靜態檔案會在 `/out` 資料夾內。
+
+執行到這裡工作就快完成了，我們已經生成了一包靜態檔案，接著要將它放到 Nginx 內運行，所以要生成一個新的工作階段將靜態檔案放進 Nginx 對應的目錄位置。繼續寫下去：
+
+```docker
+FROM nginx:alpine AS runner
+WORKDIR /app
+ENV NODE_ENV production
+COPY --from=builder /app/out /usr/share/nginx/html
+EXPOSE 8080
+ENV PORT 8080
+```
+
+- `FROM nginx:alpine AS runner` 這次從 Nginx 官方提供的 Image 開始安裝，啟動一個名為 `runner` 的工作階段。
+- `ENV NODE_ENV production` 設定環境變數為 production。
+- `COPY --from=builder /app/out /usr/share/nginx/html` 將 `builder` 階段輸出的靜態檔案使用 `COPY` 是複製到 Nginx 靜態檔案放置的路徑內。
+- `EXPOSE 8080` 指定 port 為 8080。
+
+到這邊 `Dockerfile` 已經寫好了，完成將 Next.js 應用程式輸出成靜態檔案後裝進 Nginx，打包成 Image。完整的 `Dockerfile` 長這樣：
+
+```docker
+FROM node:alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+FROM node:alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build && npm run export
+
+FROM nginx:alpine AS runner
+WORKDIR /app
+ENV NODE_ENV production
+COPY --from=builder /app/out /usr/share/nginx/html
+EXPOSE 8080
+ENV PORT 8080
+```
+
+接著在控制台輸入 `docker build -t (you_app_name) .` 就會執行寫好的 `Dockerfile` 打包專案，產生出 Image。
+
+![Untitled](Next%20js%20in%20Docker%20with%20Nginx%203d88df55b0164268b4eaabcb85ed2345/Untitled.png)
+
+用這種方式產出來的 Image 只會包含 Nginx 及靜態資源的容量，從我使用同一個應用程式打包的結果來看，`mysite_nextjs` 是原始應用程式打包的大小，`blog` 是輸出靜態資源及 Nginx 打包的大小，可看到相差甚多。因此透過這個方式能讓我們能在最終部署時僅保留所需資源。
+
+成功輸出 Image 後再來 run 看看有沒有問題。在控制台輸入 `docker run -it -dp 8080:80 blog:latest` 啟動 Container，打開瀏覽器輸入網址 [localhost:8080](http://localhost:8080) 查看。如果一切順利，Next.js 輸出的靜態檔案就可以成功在 Nginx 上執行了。
+
+<aside>
+💡 Nginx 預設的 port 號是 80，我設定的 port 號是 8080，用 `-dp 8080:80` 來啟動 Container（-d 背景執行，-p 映射 port 號）後，就能在 [localhost:8080](http://localhost:8080) 看到結果。
+
+</aside>
+
+## 使用 Docker compose 將 Server-Side-Rendering（*SSR*）頁面放上 Nginx
+
+上面示範如何利用 Docker 將靜態資源放上 Nginx，但是選用 Next.js 開發的應用程式大多是為了它提供方便的 SSR 功能，而既然是 SSR 頁面就需要有一個 Server 負責對該頁面的 request 重新抓取對應的資料，才能建立完整的 HTML 回傳給 client。
+
+![SSR 運作原理 — 圖片來源  [Krusche Company](https://kruschecompany.com/ssr-or-csr-for-progressive-web-app/)](Next%20js%20in%20Docker%20with%20Nginx%203d88df55b0164268b4eaabcb85ed2345/Untitled%201.png)
+
+SSR 運作原理 — 圖片來源  [Krusche Company](https://kruschecompany.com/ssr-or-csr-for-progressive-web-app/)
+
+為了在 Nginx 上運行 SSR 的應用程式，方法要有所改變，必須要啟用 Node.js 作為 Server 來渲染 HTML，再透過設定 Nginx 中的 `default.conf` 來處理 client request。這代表我們要啟動兩個 Container 讓它們通訊，此時就要用到 docker compose。而這樣做還能利用 Nginx 的緩存機制減輕 server loading。
+
+### Nginx 設定快取
+
+首先要抓找 Nginx 的設定檔 `default.conf` ，因為操作都是在 Docker 下進行，所以要透過 `cp` 將 Container 內將需要的檔案取出才能進行修改。步驟大概是這樣：
+
+1. `docker pull nginx`  下載 Nginx 官方提供的 Image。
+2. `docker run -it -dp 80:80 nginx` 啟動 Container。因為 `-d` 所以會背景執行且印出該 Container ID，將其複製下來。
+3. `docker cp (nginx_container_id):/etc/nginx/conf.d/default.conf .` 將 Container 內的 `default.conf` 檔案複製到 `.` 路徑。
+
+然後在 Next.js 專案目錄底下新增一個 `/nginx` 資料夾，將剛剛複製出來的 `default.conf` 放進去，接著開啟檔案修改裡面的內容。
+
+在文件的最上方新增這行程式碼來配置快取設定：
+
+```
+proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=MYCACHE:10m inactive=1d use_temp_path=off;
+```
+
+- `/var/cache/nginx`  指定存儲快取的檔案要存放在哪一個目錄。
+- `levels=1:2`  設置快取目錄的結構為二級目錄，因為預設快取檔案會放在同一個目錄下時，這樣會影響快取的效能。
+- `keys_zone=mycache:10m`  設定儲存區塊的來存放快取的 key 字串和可使用的記憶體大小。這裡是在**共享記憶體**中設定一塊名為「MYCACHE」的儲存區域，大小限制為 10 MB。1 MB 可以儲存 8000 個 key。
+- `inactive=1d` 未被訪問的快取保留時間，時間到就會被刪除。預設為 10 分鐘。
+- `use_temp_path=off` 避免 Nginx 先將快取檔案複製到臨時的存儲空間，而是將檔案直接寫入快取目錄。
+
+為了運行 SSR 網站，還要運行 Node.js 的 Container 再將它設定成請求上游（upstream），作為讓 Nginx 請求的後端伺服器以得到需要的資源。然後告訴 Nginx 需要快取的檔案是執行 `npm run build` 所生成在 `next/static` 目錄底下的靜態檔案。整份 `default.conf` 文件看起來大概像這樣：
+
+```
+proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=MYCACHE:10m inactive=1d use_temp_path=off;
+
+upstream app_upstream {
+  server app:8080;
+}
+
+server {
+    listen       80;
+    listen  [::]:80;
+
+    server_name _;
+    server_tokens off;
+
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+
+    location /_next/static {
+        proxy_cache MYCACHE;
+        proxy_pass http://app_upstream;
+    }
+
+    location /static {
+        proxy_cache MYCACHE;
+        proxy_ignore_headers Cache-Control;
+        proxy_cache_valid 60m;
+        proxy_pass http://app_upstream;
+    }
+
+    location / {
+        proxy_pass http://app_upstream;
+    }
+}
+```
+
+這邊大致上做的事情是透過新增 `location` 告訴 Nginx 將快取放在我們命名為 `MYCACHE` 的儲存區塊，要快取的目標檔案是由 Next.js 產生的所有檔案（包含靜態資源），同時設定了 60 分鐘的快取時間。
+
+### Nginx 的 Dockerfile
+
+為了讓 Nginx 與 Node.js 透過 Docker 連線，要先產生 Nginx 的 Image，因此要替它寫 Dockerfile。在 `/nginx` 目錄底下新增 `Dockerfile` 寫入以下內容：
+
+```docker
+FROM nginx:alpine
+RUN rm /etc/nginx/conf.d/*
+COPY ./default.conf /etc/nginx/conf.d/
+EXPOSE 80
+```
+
+這段程式碼做的事情是將 Nginx Image 內 `/etc/nginx/conf.d` 目錄下的檔案全部刪除，然後把我們剛剛寫好的 `.default.conf` 放進去，這樣 Nginx 就能吃到快取設定。
+
+### 修改 Next.js 的 Dockerfile
+
+打開先前在根目錄底下輸出靜態檔案放上 Nginx 的 `Dockerfile`，這次改成最後會啟動 Node server 的版本：
+
+```docker
+FROM node:alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+
+FROM node:alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM node:alpine AS runner
+WORKDIR /app
+ENV NODE_ENV production
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+USER app
+EXPOSE 8080
+ENV PORT 8080
+CMD ["node", "server.js"]
+```
+
+基本上與先前的版本大同小異，只是這次在 builder 階段不執行 `npm run export` 輸出靜態檔案到 `/out` 的資料夾，而是直接從 `/.next` 複製到 runner 階段，且 runner 階段改用 Node.js，並指定 port 號為 8080，最後使用 `CDM` 將 server 運行起來。
+
+### 利用 docker compose 啟用多個 Container
+
+最後就是要同時啟動 Nginx 與 Node.js 兩個 Container，這裡最好使用 `docker compose` 來做多容器的管理。
+
+回到專案的根目錄中新增一個 `docker-compose.yml`：
+
+```yaml
+version: "3.9"
+
+services:
+  app:
+    build: ./
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "8080:80"
+```
+
+設定很單純只是啟動兩個 Container，分別命名為 `app` 及 `nginx`，不指定啟動的 Image，而是讓 `app` 從根目錄 build，`nginx` 從 `/nginx` 的目錄 build。
+
+這裡要特別注意命名。Docker compose 會自動預設一個 network，將 services 啟動的多個 Container 加進去，達到共享網路的效果。換句話說，該 network 上的 Container 可以透過**與 Container Name 相同的 hostname 互相連接（reachable）**。
+
+Container Name 可以隨意更動，但是在我們的範例中，`nginx/default.conf` 文件內設定的 upstream 名稱為 `app`，因此在撰寫 YMAL 檔案時應用程式的 Container Name 就必須寫 `app` ，Nginx 才能透過 Docker compose 的 network 找到指定的 hostname 做連線。
+
+注意只有 `nginx` 有設定對外連線的 port 號為 8080，原因是我們希望所有要訪問 `app` 的連線都必須透過 `nginx` 的代理才行，而 `nginx` 是利用 Docker compose 的網路功能找到 `app`。
+
+最後啟動 Container，在專案根目錄的控制台輸入指令 `docker compose up -d` 執行 build 與 run。
+
+現在可以在瀏覽器輸入 `[http://localhost:8080](http://localhost:8080)` 並查看結果，SSR 頁面也能放上 Nginx 執行了！
+
+<aside>
+💡 因為我們沒有在 YMAL 檔案中指定 Image，所以要重新 build 並執行可以下這個指令： `docker-compose up --build`
+
+</aside>
+
+## 結語
+
+透過 Nginx 快取，可以將第一次請求結果的靜態文件保存在 client，比起每次都訪問 Node.js 做出一樣的回應，快取伺服器可以會代替我們回應，利用 Nginx 提供更有效地服務。
+
+如果想要測試快取效果，也可以添加 `X-Cache-Status` 到 `/nginx/default.conf` 檔案中觀察結果，都沒問題的話，接下來就能部署到生產環境上囉，只是記得到時候要刪掉 `X-Cache-Status` 就行了。

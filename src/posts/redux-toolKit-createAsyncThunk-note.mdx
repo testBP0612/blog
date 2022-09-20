@@ -1,0 +1,253 @@
+---
+title: 在 Redux ToolKit 中使用 createAsyncThunk 處理非同步請求
+date: '2022-07-24'
+description: 這是一篇整理官方文件資料的 createAsyncThunk 學習筆記，對於處理 Redux ToolKit 中的非同步場情有很大的幫助。
+thumbnailUrl: '/javascript-functions-thumbnail.jpeg'
+tags: ['redux', 'typescript']
+---
+
+## 前言
+
+Redux 提供強大的狀態管理功能，但當遇到非同步事件時就束手無策，要透過安裝額外的插件來解決，像是 [redux-thunk](https://github.com/reduxjs/redux-thunk) 或 [redux-saga](https://github.com/redux-saga/redux-saga) 這兩套較廣為人知。
+
+而在使用 Redux ToolKit 時，已經默認包含了 redux-thunk，並且提供了 `createAsyncThunk` 來處理非同步事件的 function。
+
+## 使用方式
+
+使用前需要先對 Redux Toolkit 的 slice 有基本認識。基本用法為先在 slice 的檔案中創造 `createAsyncThunk`，然後在 `createSlice` 中使用 `extraReducers` 處理非同步請求的結果，最後在 component 或任何你需要用到時使用 `dispatch` 呼叫 thunk。
+
+它接受 3 **個參數**，分別是必填的自定義的 action type 字串、必填的非同步 callback function、選填的 options 物件，然後回傳非同步 function 結果，然後我們能根據 promise 生命週期處理對應的邏輯。
+
+本文章將使用 typescript 進行說明，以下是官方範例：
+
+```tsx
+// user.slice
+import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
+import { userAPI } from './userAPI'
+
+// 首先創造一個 createAsyncThunk
+const fetchUserById = createAsyncThunk(
+  'users/fetchByIdStatus',
+  async (userId: number, thunkAPI) => {
+    const response = await userAPI.fetchById(userId)
+    return response.data
+  }
+)
+
+interface UsersState {
+  entities: []
+  loading: 'idle' | 'pending' | 'succeeded' | 'failed'
+}
+
+const initialState = {
+  entities: [],
+  loading: 'idle',
+} as UsersState
+
+// 接著在 reducers 中處理邏輯
+const usersSlice = createSlice({
+  name: 'users',
+  initialState,
+  reducers: {
+    // 這裡是執行標準 reducers 操作
+  },
+  extraReducers: (builder) => {
+      // 添加 reducers 處理 promise 產生的額外 action types
+      builder.addCase(fetchUserById.fulfilled, (state, action) => {
+        // 例如 fulfilled 將資料添加到 users state 內
+        state.entities.push(action.payload)
+    })
+  },
+})
+
+// 最後，在你需要的地方 dispatch 即可執行
+dispatch(fetchUserById(123))
+```
+
+在 `createSlice` 中使用標準 `reducers` 的重點在於自己定義好 action types，撰寫同步邏輯，對 state 進行各式各樣修改操作；而 `extraReducers` 則是改成根據非同步請求的 action types 結果處理邏輯，在使用方式上有幾分類似。
+
+## 參數介紹
+
+拿官方範例來看，第一個參數 `'users/fetchByIdStatus'` 是可以自定義的 action types 字串，每當我們在應用程式內使用 `dispatch` 調用函數時，`createAsyncThunk` 會根據自訂的字串產生三個對應的 action types 字串：
+
+- `pending`: `'users/requestStatus/pending'`
+- `fulfilled`: `'users/requestStatus/fulfilled'`
+- `rejected`: `'users/requestStatus/rejected'`
+
+這三個 action types 如同 promise 生命週期的順序，初始調用會先回傳 pending（處裡中） 狀態，接著根據執行結果回傳 fulfilled（成功）或 rejected（失敗）。
+
+### payloadCreator
+
+`createAsyncThunk` 的第二個參數官方稱之為 payloadCreator，是一個非同步的 callback function，通常會使用 fetch 或 axios 之類的方式來發送 request，再返回 request 的結果，如果發生錯誤，也可以將錯誤攔截並回傳。
+
+payloadCreator 只接受 2 個參數，分別為：
+
+- `arg`：自定義的參數，在 dispatch 的時候作為第一個參數傳入。當我們發送 request 時，如果需要帶入特定的參數（例如 ID），就能發揮功用。因為只接受單一參數，如果需要帶入複數的值，要以 object 的形式帶入，像是這樣 `dispatch(fetchUsers({ status: 'active', sortBy: 'name' }))`。
+- `thunkAPI`：官方提供的參數，有許多[非常好用的功能](https://redux-toolkit.js.org/api/createAsyncThunk#payloadcreator)。幾個常用的：
+  - `thunkAPI.dispatch`：可以在 async thunk 中直接調用 action，等於使用 dispatch。
+  - `thunkAPI.getState` ：從 `store.getState` 中取得 state。
+  - `thunkAPI.rejectWithValue` ：拋出錯誤時，客製化定義錯誤訊息。
+
+要特別注意寫 typescript 使用 `thunkAPI.getState` 的型別預設是 unknown，可能會導致一些問題，因此需要做處理。
+
+首先要知道 `store.getState` 的 type 是什麼，在 store.ts 中定義一個 `RootState`：
+
+```tsx
+const store = configureStore({
+  // ...你的 reducer 設定
+});
+export type RootState = ReturnType<typeof store.getState>;
+```
+
+得到 `RootState` 後，我們有兩種方式處理，第一種是使用 `createAsyncThunk` 時就定義好 `getState` 的 type。這裡就要替 payloadCreator 定義 type，我們已經知道會有一個回傳結果，一個自定義的 `arg`，一個 `thunkAPI`，要定義的 `getState` 就在其中。
+
+```tsx
+const fetchUserById = createAsyncThunk<
+  // 返回結果的 type (response.data)
+  MyData,
+  // 自定義參數的 type (userId)
+  number,
+  // thunkAPI 可用字段的 type，因為是 object，因此用 object 形式表示
+  {
+    // state 就是 getState
+    state: RootState;
+  }
+>('users/fetchByIdStatus', async (userId: number, thunkAPI) => {
+  // 這裡就能得到 redux 內的 user，且 type 已經是定義好的了
+  const userState = thunkAPI.getState().user;
+  const response = await userAPI.fetchById(userId);
+  return response.data;
+});
+```
+
+第二種方式比較簡單，用 `as` 定義 getState 的 type 即可。
+
+```tsx
+const fetchUserById = createAsyncThunk('users/fetchByIdStatus', async (userId: number, thunkAPI) => {
+  // 定義 getState 的 type 為 RootState
+  const state = thunkAPI.getState() as RootState;
+  // 一樣能取得 user 定義好的 type
+  const userState = state.user;
+  const response = await userAPI.fetchById(userId);
+  return response.data;
+});
+```
+
+### **Options**
+
+第三個參數是選填 object，用來配置 `createAsyncThunk` 的設定。例如想要有條件執行 payloadCreator 可設定 `condition` 及 `dispatchConditionRejection`。
+
+- `condition`：一個 callback function，接收來自 thunk 的兩個參數，自定義的 `arg` 和 `{ getState, extra }` ，若回傳 `false` 就會在 payloadCreator 創建前取消它。
+- `dispatchConditionRejection`：預設是 `false`，如果為 `true` 則在 payloadCreator 的創建**被取消後**會進入 rejected 的處理，否則一旦被取消就不會做任何處理。
+
+```tsx
+const fetchUserById = createAsyncThunk(
+  'users/fetchByIdStatus',
+  async (userId: number, thunkAPI) => {
+    const response = await userAPI.fetchById(userId);
+    return response.data;
+  },
+  {
+    condition: (userId, { getState, extra }) => {
+      const { users } = getState();
+      const fetchStatus = users.requests[userId];
+      if (fetchStatus === 'fulfilled' || fetchStatus === 'loading') {
+        // 如果資料正在獲取中，或是資料已經獲取完畢，就不重複取資料
+        return false;
+      }
+    },
+    // 取消後會進入 rejected 處理，預設是 false
+    dispatchConditionRejection: true,
+  }
+);
+```
+
+更多說明可以[參考這裡](https://redux-toolkit.js.org/api/createAsyncThunk#options)。
+
+## extraReducers
+
+在設定好 async thunk 後，就能在 `extraReducers` 內處理衍生的三個生命週期，也因為生命週期都清楚的拆分出來了，我們就能針對 state 執行需要的操作，像是在 pending 時將狀態修改成「載入中」，fulfilled 時將資料取出存入 state，rejected 時儲存錯誤資訊等。
+
+> `extraReducers` 在官方的範例中一共有四種寫法，不過使用若是使用 typescript 撰寫，為了能準確得知 state 及 action 的 type，官方[建議使用 builder callback](https://redux-toolkit.js.org/usage/usage-with-typescript#type-safety-with-extrareducers) 的寫法。
+
+```tsx
+const usersSlice = createSlice({
+  name: 'users',
+  initialState,
+  reducers: {
+    // 這裡是執行標準 reducers 操作
+  },
+  extraReducers: builder => {
+    builder.addCase(fetchUserById.penging, state => {
+      state.loading = 'pending';
+    });
+    builder.addCase(fetchUserById.fulfilled, (state, action) => {
+      state.loading = 'succeeded';
+      state.entities.push(action.payload);
+    });
+    builder.addCase(fetchUserById.rejected, (state, action) => {
+      state.loading = 'failed';
+      state.error = action.error;
+    });
+  },
+});
+```
+
+以上的 code 可以看出在 `extraReducers` 內進行資料存取十分簡便，若是有多個 async thunk 要處理，只需要根據需求多寫幾個 builder callback 就行了。
+
+> 對 Redux 熟悉的人看到上面的寫法可能會產生疑問，為什麼可以直接指定 state 的值？reducer 不應該是返回一個物件嗎？這是因為 Redux ToolKit 在 `createSlice` 內[自動載入了 Immer 庫](https://redux-toolkit.js.org/usage/immer-reducers)，讓我們在操作 state 時可以更直觀。
+
+```tsx
+// Redux 必須是純函數，返回一個物件
+return {
+  ...state,
+  users: [...state.users, action.payload],
+};
+
+// 使用 Redux ToolKit 內的 Immer 讓我們可以直接操作 state
+state.users = action.payload;
+```
+
+## 錯誤處理
+
+當 payloadCreator 返回的結果為一個被拒絕的 promise（或是拋出錯誤）， 就會進入 rejected 進行錯誤處理。在 `extraReducers` 內使用 `action.error` 得到錯誤結果的 object，官方稱之為 `SerializedError`，另外在捕捉時僅會留下官方定義好的 interface，未符合格式的值將被自動刪除。
+
+因此前端人員與後端人員配合時，後端人員就可以依照這個 interface 定義回傳的資料格式，像是一般常用的 message 及 code，確保發生錯誤時可以得到正確的反饋。
+
+```tsx
+// 官方提供的錯誤訊息 object，傳入的資料如果沒有對應的 key 會被自動刪除
+export interface SerializedError {
+  name?: string;
+  message?: string;
+  stack?: string;
+  code?: string;
+}
+```
+
+若是不使用官方提供的 `SerializedError`，我們也可以自己定義客製化的錯誤訊息，透過將值傳遞給 `thunkAPI.rejectWithValue` 進行定義，返回給 reducer，就能使用 `action.payload` 取得定義好的值。
+
+```tsx
+const updateUser = createAsyncThunk('users/update', async (userData, thunkAPI) => {
+  const { id, ...fields } = userData;
+  try {
+    const response = await userAPI.updateById(id, fields);
+    return response.data.user;
+  } catch (err) {
+    // 傳入客制的錯誤訊息
+    return thunkAPI.rejectWithValue('糟糕！發生了一些錯誤');
+  }
+});
+
+// ... 在 builder callback 內用 action.payload 取得錯誤訊息
+extraReducers: {
+  builder.addCase(updateUser.rejected, (state, action) => {
+    // log '糟糕！發生了一些錯誤'
+    console.log(action.payload);
+  });
+}
+// ...
+```
+
+## 下一步
+
+只要先搞懂上述的 `createAsyncThunk` 及 `extraReducers` 使用情境，在 Redux ToolKit 中遇到非同步情境應該都能輕鬆地處理它，更別提還有其他好用的 API 值得深入研究，像是 `thunkAPI.signal` 就是原生 fetch 的 `AbortController.signal`，用來取消請求。如果有看不懂的地方，建議直接點進去看官方原始碼都有很詳細的備註說明。

@@ -1,11 +1,12 @@
-import headerNavLinks from '@constants/headerNavLinks';
 import Link from 'next/link';
 
 import ThemeSwitch from './ThemeSwitch';
+import { containerClassName } from './SectionContainer';
+import headerNavLinks from '@constants/headerNavLinks';
 
 const Header = () => {
   return (
-    <header className="flex items-center justify-between py-10">
+    <header className={`flex items-center justify-between py-10 ${containerClassName}`}>
       <div>
         <Link href="/">
           <a className="flex items-center justify-between">

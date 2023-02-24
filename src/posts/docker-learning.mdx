@@ -1,0 +1,228 @@
+---
+title: 前端工程師從 1 開始學習 Docker
+date: '2022-08-14'
+description: 前端工程師學習 Docker 的隨手筆記內容，感受虛擬化容器技術的好處。
+thumbnailUrl: '/javascript-functions-thumbnail.jpeg'
+tags: ['docker']
+---
+
+## 前言
+
+>Docker 版本為 20.10.17
+
+這篇文章沒有太多 Docker 的基礎使用方式，主要是官方網站的 [Getting started](https://docs.docker.com/get-started/) 已經提供非常詳盡的基本操作說明，只要照著文件一步一步往下走，是不會遇到太大的問題，也可以先熟悉如何下 Docker 指令。
+
+內容偏向讀書紀錄，也許會看起來文謅謅的，但這是個人習慣透過反覆咀嚼文字吸收知識，只有這樣才能更了解這個技術的基礎是什麼。
+
+## Docker 簡介
+
+Docker 的核心稱為 Docker Engine，具有管理 Container 的重要功能，主要由以下三個關鍵要素組成：
+
+1. Image（映像檔）：將應用程式透過 Docker 打包產生的檔案，Image 是唯讀的（read only），可被視為一個 Container 的安裝檔，主要功用是用來開啟一個 Container。一個 Image 可建立多個 Container，還可以用建立後的 Container 再去製作一個新的 Image。
+2. Container（容器）：為一個運行中的虛擬主機（VM），在同一台電腦上運作的每一個 Container 都會被指派一個自己的 namespace（命名空間），不同 namespace 的 Container 會互相隔離，擁有完整且獨立的運作環境。可以透過 Docker 指令進行啟動、暫停、刪除，以及修改。
+3. Docker Registries：一個用來存放 Image 的倉庫，由 Docker 官方維護的 Docker Hub 就是最大的 Docker registry，是個類似於 GitHub 可以上傳、下載公開 Image 的系統。若不希望 Image 公開，也可以自己建立一個私有的倉庫來存放。
+
+Docker 技術終究是一種輕量虛擬機技術，虛擬機技術會使用到本機電腦的硬體資源，根據官方文件所述，Docker 透過 Control Group 的技術來限制、控制、分離每個 Container，也就是劃分疆土的概念。使每個 Container 在運行時彼此是共享同樣的硬體資源，又能任意分配資源，例如可使用的記憶體等等。
+
+### Volumes
+
+每個 Container 生成時都會產生新的獨立執行環境，因此若在某個 Container 中進行資料的增刪查改，資料會被儲存在自己的「暫存空間」中，下次即使再用相同的 Image 創建新的 Container 時，資料是無法共用的。
+
+Volumes 是幫助我們解決資料無法持久化保存的機制。透過在 Container 內指定的檔案或資料夾路徑替換成指定的路徑，也能指定一個 Container 作為 Volumes 提供給其他 Container 使用，讓不同的 Container 可以透過共享相同的路徑達到資料共享的效果，對 Volumes 做的任何修改也會即時更新到 Container 身上。
+
+## Dockerfile
+
+用來將應用程式建構生成 Image 的**腳本指令文件**，在建構執行時 Docker 會逐條執行 Dockerfile 寫好的多個指令。簡單來說就是標準化 Docker commit 執行的動作。
+
+在 Dockerfile 建構時的每條指令在執行時都會替 Image 添加一層 Layer，若是我們重寫了某些指令並且重新建構，那在進行建構時只會替換有異動的那些 Layer。也因為 Image Layer 的機制，若是有多個套件要安裝，最好用 `&&` 將安裝指令串在一起統一執行，避免衍生出一些問題。
+
+### FROM
+
+```docker
+FROM [--platform=<platform>] <image> [AS <name>]
+# Or
+FROM [--platform=<platform>] <image>[:<tag>] [AS <name>]
+# Or
+FROM [--platform=<platform>] <image>[@<digest>] [AS <name>]
+# example
+FROM --platform=windows/amd64 busybox:latest AS second-stage 
+```
+
+正確的 Dockerfile 指令必須從 `FROM` 開始建構一個**全新的工作階段**，再繼續撰寫指令對該 Image 進行設定。
+
+- `< 必填項目 >`：Image 的名稱（或 ID），可以來自本機電腦內或 Docker Hub 上的 Image。
+- `[ 選填項目 ]` ：有以下幾種可選屬性：
+    - `tag`：指定 Image 的版本，預設就是 latest。
+    - `AS <name>` ：將替當前工作階段命名，當我們有多個工作階段要依序執行時很有用。
+    - `--platform=<platform>` ：如果 Image 要用於其他架構平台可填，例如 `linux/amd64`, `linux/arm/v7`,  `windows/amd64`，預設是來自 Image 使用的平台。
+
+### WORKDIR
+```docker
+WORKDIR /app
+```
+
+使用 Dockerfile 時預設的工作路徑是根目錄 `/`，但打包的檔案建議換到一個自建的全新空目錄，例如 `/app`。而 `WORKDIR` 是設定執行 `docker build` 與 `docker run` 預設工作目錄的指令。
+
+### ARG
+
+```docker
+ARG <name>[=<default value>]
+```
+
+用來宣告一個變數，在工作階段中使用，也可以在 build 時使用 `--build-arg <varname>=<value>` 傳遞值。
+
+- `< 必填項目 >`：宣告的變數名稱。
+- `[ 選填項目 ]` ：設定預設值。
+- 是唯一可以在 `FROM` 之前定義的指令，但因為不是在工作階段定義，所以只能用在 `FROM` 身上，若要在後續的工作階段繼續使用則需要再定義一次 `ARG`。
+
+```docker
+ARG VERSION=latest
+FROM busybox:$VERSION
+ARG VERSION
+RUN echo $VERSION > image_version
+# (O) 可以吃到 VERSION，結果為 RUN echo latest > image_version
+
+ARG VERSION=latest
+FROM busybox:$VERSION
+RUN echo $VERSION > image_version
+# (X) 無法吃到 VERSION，結果為 RUN echo $VERSION > image_version
+```
+
+- Scope（作用域）：
+    - 宣告後才會起作用，宣告前就使用會被視為無效。（example 1）
+    - 宣告後只會存在於當前工作階段，在多個工作階段使用時需要在每個階段都宣告一次。（example 2）
+        - 控制台輸入 `docker build --build-arg user=what_user .`
+
+```docker
+# example 1
+FROM busybox
+USER ${user:-some_user}  # 此時 user 是 some-user
+ARG user
+USER $user  # 此時 user 是 what_user
+
+# example 2
+FROM busybox
+ARG SETTINGS
+RUN ./run/setup $SETTINGS
+
+FROM busybox
+ARG SETTINGS  # 不同的工作階段要再宣告一次
+RUN ./run/other $SETTINGS
+```
+
+- 宣告的 `ARG` 最終不會保留在 Image 內（也不會產生 Layer）。
+- `ARG` 與 `ENV` 一起使用時，宣告相同名稱的 `ARG` 值**總是會被** `ENV` 覆蓋過去。
+
+### ENV
+
+```docker
+ENV <key>=<value> ...
+```
+
+用來指定環境變數，為 Key-Value 的對應關係，允許一次設定多組 `ENV`。
+
+- 當 Container 從 Image 生成時，`ENV` 的變數會保持不變。
+    - 這可能會導致一些不想被保留的環境變數影響到 Container，此時建議改用 `ARG` 解決。
+    - 相對的，可以確保執行時設定好的環境變數最終保持不變。
+- 輸入 `docker inspect <container_name>` 會發現 Dockerfile 寫好的 `ENV` 被保存在 Container 內。
+
+### RUN
+
+```docker
+RUN <command>
+RUN ["executable", "param"]
+```
+
+指定 build 過程中所要執行的指令，例如用來指定套件安裝動作，可以依照依賴項進行逐行安裝，安裝好的套件將可以繼續在 Dockerfile 中使用。
+
+- 如果要看在 build 的過程查看 `RUN` 執行的結果，在 `docker build` 指令後面加上 `—progress=plain` 。
+- 最好是指定 `WORKDIR` 使用。
+
+### CMD
+
+```docker
+CMD ["executable","param1","param2"]
+```
+
+指定啟動 Container 後所要執行的指令，在 build 過程中不會有任何動作。
+
+- 一個 Dockerfile 中只能有一個 `CMD` 指令。如果出現多個 `CMD`，則只有最後一個才會生效。
+- 如果在 `docker run <image>` 後面指定參數，那麼會將 `CMD` 就會覆蓋過去。
+    - 例如 `docker run myimage cat log.txt` 使用 `cat` 指定印出檔案內容，就會讓寫好的 `CMD` 失效。
+
+### ENTRYPOINT
+
+```docker
+ENTRYPOINT ["executable", "param1", "param2"]
+ENTRYPOINT command param1 param2
+```
+
+與 `CMD` 指令相同，指定 Container 啟動後所執行的指令，撰寫多行時，只有最後一行會生效。
+
+**ENTRYPOTION 與 CMD 的互動**
+
+```docker
+ENTRYPOINT echo 123
+CMD echo 456
+# ouput 123
+```
+
+- 以 *shell* 形式撰寫 `ENTRYPOINT` 時會蓋過 `CMD` 指令。
+- `docker run <image>` 指令後面下的參數會失去功用。
+
+```docker
+ENTRYPOINT ["echo", "000"]
+CMD echo 456
+# 000 /bin/sh -c echo 456
+```
+
+- 以 *executable* 形式撰寫 `ENTRYPOINT` 時，會將 `CMD` 指令當成 *parameter* 傳入。
+- 同理，`docker run <image>` 指令後面下參數也會被當成 *parameter* 傳入，並且會把 `CMD` 覆蓋過去。
+
+### ADD
+
+```docker
+ADD <src>... <dest>
+ADD ["<src>",... "<dest>"]  # 當路徑有空格時用這個寫法
+```
+
+用來將本機電腦的檔案複製到 Image，用法是從 `<src>` 複製檔案、目錄或**從** **URL 下載檔案**，並將它們添加到 Image 的 `<dest>` 路徑。
+
+<aside>
+💡 雖然`ADD` 可以從 URL 下載檔案，但 [Docker 官方不建議這麼做](https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#add-or-copy)，建議改用 `curl` 或 `wget`。
+
+</aside>
+
+- 如果是複製壓縮檔，該壓縮檔可被 Docker 識別時（`gzip`, `bzip2` 以及 `xz`），它會直接被解壓縮出來。
+- 可以用 `-keep-git-dir=true` 將 Git Repository 複製到 Image 中。
+    - 如果是私有庫，可以[透過添加 ssh 來訪問該 Repository](https://docs.docker.com/engine/reference/builder/#adding-a-private-git-repository)。
+
+```docker
+FROM alpine
+ADD --keep-git-dir=true https://github.com/moby/buildkit.git#v0.10.1 /buildkit
+```
+
+### COPY
+
+```docker
+COPY <src>... <dest>
+COPY ["<src>",... "<dest>"]  # 當路徑有空格時用這個寫法
+```
+
+功能及語法都與 `ADD` 雷同，都是將檔案複製到 Image 中。差別在於無法壓縮檔案，無法從 URL 下載檔案。不過 `COPY` 可用於多工作階段的場景，複製前面工作階段的產物到當前的工作階段。
+
+```docker
+# stage 為工作階段名稱
+COPY --from=<stage> <src>... <dest>  
+```
+
+撰寫好 Dockerfile 後執行指令進行建構，`-f` 後面標示 Dockerfile 檔案的所在路徑，不寫代表在當前工作路徑下， `-t` 後面表示建構成功後指定一個 tag 給剛剛生成的 image， `.` 標示在當前路徑下執行。
+
+```bash
+docker build -f ci/Dockerfile -t my-client .
+```
+
+<aside>
+💡 這種寫法是將 `docker build -f` 及 `docker build -t` 寫在一起，build 的同時給予 tag，Docker 會由前至後的依序執行，如果中途有錯誤會跳出並中斷後續執行。
+
+</aside>

@@ -1,6 +1,4 @@
 import type { NextPage } from 'next';
-import Head from 'next/head';
-import Image from 'next/image';
 
 import { PageSEO } from '@components/SEO';
 import SectionContainer from '@components/layout/SectionContainer';

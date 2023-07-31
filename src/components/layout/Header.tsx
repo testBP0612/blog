@@ -9,16 +9,16 @@ const Header = () => {
     <header className={`flex items-center justify-between py-10 ${containerClassName}`}>
       <div>
         <Link href="/">
-          <a className="flex items-center justify-between">
+          <span className="flex items-center justify-between">
             <div className="mr-3">A</div>
-          </a>
+          </span>
         </Link>
       </div>
       <div className="flex items-center text-base leading-5">
         <div className="hidden sm:block">
           {headerNavLinks.map(link => (
             <Link key={link.title} href={link.href}>
-              <a className="p-1 font-medium text-gray-900 dark:text-gray-100 sm:p-4">{link.title}</a>
+              <span className="p-1 font-medium text-gray-900 dark:text-gray-100 sm:p-4">{link.title}</span>
             </Link>
           ))}
         </div>

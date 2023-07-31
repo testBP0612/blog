@@ -7,9 +7,9 @@ interface TagProps {
 const Tag = ({ text }: TagProps) => {
   return (
     <Link href={`/tags/${text}`}>
-      <a className="mr-3 px-1 py-0.5 text-xs font-medium uppercase text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 border border-gray-400 rounded">
+      <span className="mr-3 px-1 py-0.5 text-xs font-medium uppercase text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 border border-gray-400 rounded">
         {text.split(' ').join('-')}
-      </a>
+      </span>
     </Link>
   );
 };
